@@ -104,7 +104,8 @@ an ordinary 2D task into 3D.
    paths for the Reviewer to `Read` exactly once each; append the optional
    strict-3D accepted control as a fourth entry when present. The Reviewer sees only those images plus the aesthetic library,
    fixed diagnostics, and optional 3D insert, then returns strict JSON without
-   reopening image paths or reading review/Drawer history.
+   re-reading an image it has already opened, and without reading
+   review/Drawer history.
 7. Run `scripts/figannot.py review-decision` after every Reviewer result. A
    clean result before the run reaches `min_reviews` total valid Reviewer calls
    starts another Reviewer on the same immutable draft with no Drawer in between.
@@ -146,6 +147,7 @@ an ordinary 2D task into 3D.
     three-d/              # mode files and routed 3D modules, only for 3D runs
   tools/
     figannot.py
+    fit_images.py
     score_3d_candidates.py  # optional for strict 3D candidate diagnosis
   figure_iter0.py
   img_iter0.png
@@ -168,6 +170,7 @@ an ordinary 2D task into 3D.
     annotated.png
     notes.md
   audit_iter0.json
+  image_fit_0.json
   audit_iter0.stderr
   ...
   figure.py

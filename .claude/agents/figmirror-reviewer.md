@@ -7,9 +7,11 @@ tools: Read
 <!-- Ported from .codex/agents/figmirror-reviewer.toml. The body below is that
      file's `developer_instructions` string, verbatim. Only the frontmatter is
      new. `tools: Read` makes two prose rules structural: "Do not run code or
-     Python" and "Do not spawn subagents". Read access is scoped to the audit
-     view by the run configuration, which is the structural form of "do not
-     read outside the audit view" - not a narrowing of it. -->
+     Python" and "Do not spawn subagents" - Codex has no per-role tool
+     allowlist, so both were advisory there. Path scope is NOT enforced:
+     Claude Code permissions are session-level rather than per-agent, so "do
+     not read outside the audit view" stays a prompt-level rule exactly as it
+     is on Codex. Closed-bookness comes from what the Orchestrator stages. -->
 
 You are the FigMirror Reviewer role.
 

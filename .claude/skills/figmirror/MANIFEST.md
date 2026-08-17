@@ -1,17 +1,17 @@
 # MANIFEST — Claude-side FigMirror bundle provenance
 
-Source: `.codex/skills/figmirror` in this repo, at commit `da9c64be07ae95065eea46e8a84cea4aea23015a`.
+Source: `.codex/skills/figmirror` in this repo, at commit `1f2478acdb5e132711c0a0cf5298102505f5c9ef`.
 Copied 2026-08-17. `__pycache__` excluded.
 
 ## Ported byte-for-byte
 
-These carry no harness-specific content and are identical to their Codex
-counterparts. Verify with:
+Identical to their Codex counterparts. Verify with:
 
 ```
 diff -r --exclude=__pycache__ \
   --exclude=MANIFEST.md --exclude=SKILL.md \
   --exclude=orchestrator-claude.md --exclude=fit_images.py \
+  --exclude=agents \
   .codex/skills/figmirror .claude/skills/figmirror
 ```
 
@@ -19,7 +19,6 @@ It must print nothing.
 
 | sha256 | file |
 |---|---|
-| `86ce4af438bbf854086c13ac08f905af1892b94999862aa0b63610031de160ae` | `agents/openai.yaml` |
 | `e464be689dad19e19a0b6eca58bfc5d1b30bdcb2eac380f6186c06b5192e2c0d` | `references/aesthetic-library.md` |
 | `0805d5c19b20604db739869fdf9c386e6cc7038c573120fc7e5b6ec73c2efd5a` | `references/drawer.md` |
 | `4d25e9addbda05c54eb6e1bef094f7ba66a01557e04a92d24bae0a4d83b401f1` | `references/orchestrator-codex.md` |
@@ -44,15 +43,22 @@ It must print nothing.
 | `2c96431c71edbc458107f9fcdb2b848d25dc58334512dfb214abd9a2ce77c31d` | `scripts/score_3d_candidates.py` |
 
 `references/orchestrator-codex.md` is in that list on purpose. It is not
-followed at runtime; it is kept as the diff baseline that makes every change
-in `orchestrator-claude.md` reviewable.
+followed at runtime; it is the diff baseline that makes every change in
+`orchestrator-claude.md` reviewable.
+
+## Not carried across
+
+`agents/openai.yaml` — the Codex UI manifest (`display_name`,
+`short_description`, `default_prompt`). It configures how the skill is
+presented in the Codex client and nothing here reads it, so carrying it
+would be dead weight that implies a Claude-side agents layer exists.
 
 ## Adapted for this harness
 
 `SKILL.md` is the entry point Claude actually loads, so it cannot stay
-byte-identical: the Codex version names `orchestrator-codex.md`, `spawn_agent`,
-`fork_context`, and the `items` image-attachment channel, none of which exist
-here. Changed lines, and nothing else:
+byte-identical: the Codex version names `orchestrator-codex.md`,
+`spawn_agent`, `fork_context`, and the `items` image-attachment channel,
+none of which exist here. Changed lines, and nothing else:
 
 - "main Codex process" / "top-level Codex process" -> "main `claude` process"
 - Drawer and Reviewer dispatch: `spawn_agent` + `fork_context=false` ->
@@ -62,7 +68,8 @@ here. Changed lines, and nothing else:
   Reviewer opens with `Read`, once each
 - Loop-wiring reference and staged prompt filename: `orchestrator-codex.md` ->
   `orchestrator-claude.md`
-- Step 6 additionally names `scripts/fit_images.py`
+- Step 6 additionally names `scripts/fit_images.py`; the artifact layout adds
+  `tools/fit_images.py` and `image_fit_<N>.json`
 
 No step, budget, artifact name, or decision rule changed.
 
@@ -70,5 +77,5 @@ No step, budget, artifact name, or decision rule changed.
 
 | sha256 | file | why |
 |---|---|---|
-| `878532ce61b21bc87e4b5140e72350b255435b6566b4209c6382f9eb5d47a88e` | `references/orchestrator-claude.md` | Dispatch-mechanism port of orchestrator-codex.md. Algorithm, decision state machine, iteration budget and fail-closed rules unchanged. |
-| `dff709eb67d599b854b3301e7dc8006ffc55ef03b7fc5c971bf316ffcc1f05f5` | `scripts/fit_images.py` | Fits staged near views to the 2000px delivery limit so the delivered pixels are a recorded property of the run. Refuses composite.png and img_iter*.png. |
+| `0076e07bb5181d4652fc5d44fd91e9a8803b8e7cafab06fca947b690a09e795e` | `references/orchestrator-claude.md` | Dispatch-mechanism port of orchestrator-codex.md. Algorithm, decision state machine, iteration budget and fail-closed rules unchanged. |
+| `121b4880c7c1d88a9b42925846f7301866f389ed82ddb5b6c57996a463950201` | `scripts/fit_images.py` | Fits staged audit-view images to the 2000px delivery limit so the delivered pixels are a recorded property of the run. Refuses any path outside audit_view_<N>/, and composite.png inside it. |

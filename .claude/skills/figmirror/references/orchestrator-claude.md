@@ -65,7 +65,8 @@ SKILL_DIR=/absolute/path/to/figmirror
 REFERENCES=$SKILL_DIR/references
 USE_3D_INSERT=${USE_3D_INSERT:-0}
 USE_3D_CANDIDATE_SCORER=${USE_3D_CANDIDATE_SCORER:-0}
-PYTHON_CMD=${FIGMIRROR_PYTHON_CMD:-"uv run python"}
+REPO=/absolute/path/to/repo
+PYTHON_CMD=${FIGMIRROR_PYTHON_CMD:-"uv run --project $REPO python"}
 ```
 
 Use `PYTHON_CMD` for every Python invocation in this workflow, including
@@ -371,10 +372,10 @@ bash -lc "$PYTHON_CMD \"$WORKDIR/tools/fit_images.py\" --max-edge 2000 \
   \"$AV/accepted_control.png\""
 ```
 
-Use the same fully-qualified `PYTHON_CMD` form as every other Python call in
-this workflow, `--project` argument included. A bare `uv run python` resolves
-against the current directory, which is `$WORKDIR` and outside the repository;
-the Pillow import then fails and `fit_images.py` exits 2.
+`PYTHON_CMD` must carry its `--project` argument here as everywhere else. A
+bare `uv run python` resolves against the current directory, which is `$WORKDIR`
+and outside the repository; Pillow is then missing, and both `fit_images.py` and
+`figannot.py compose` fail on the import.
 
 The report goes to `$WORKDIR`, not into `$AV`. Anything staged inside the audit
 view is admissible evidence for the Reviewer, and delivered-size metadata is
@@ -466,8 +467,10 @@ inside the task text and the Reviewer opens each path itself. Materialize every
 path as a literal absolute path — no `$AV`, no `$WORKDIR`, no relative token.
 Enumerate exactly three paths, in the order composite / reference / draft, and
 append the `accepted_control.png` line as a fourth entry only when that file
-exists. Never list `img_iter$ITER.png`: it is byte-identical to the staged
-`draft_fullres.png` and would duplicate the near view.
+exists. Never list `img_iter$ITER.png`. `draft_fullres.png` is its staged copy, and
+that copy may have been fitted to the delivery limit, so the two are not
+interchangeable: listing the original both duplicates the near view and mixes
+unfitted pixels into the evidence set.
 
 This is a weaker guarantee than an attachment channel: the Reviewer could read
 fewer images, reorder them, or skip them. Be precise about what closes that gap
@@ -516,15 +519,25 @@ rev-iter<N>-slot<K>
 `N` is the current Drawer round. `K` starts at 1 for the first Reviewer dispatch
 of that round and increments on every subsequent dispatch for the same round,
 whether it came from `review_same_draft` or from `retry_reviewer` — a retry must
-carry a fresh identifier, never the one that just failed. The value is
-deterministic, recomputable from `process.md`, and depends on no clock.
+carry a fresh identifier, never the one that just failed.
+
+`K` is recomputable, and it must be recomputed rather than remembered, because
+the Orchestrator's own context may be compacted mid-run. The authority is the
+attempt ledger the helper maintains: `K = 1 + (number of entries in
+$WORKDIR/review_attempts/ whose iter equals N)`. Do not derive it from
+`process.md`; that file is only written at finalization and does not exist
+during the loop.
 
 Freeze it once minted. The same string names the incoming file
 (`.review_incoming_rev-iter<N>-slot<K>.json`) and is passed as
-`--reviewer-session`, and re-running the same `review-decision` invocation must
-reuse the recorded value rather than mint a new one; otherwise the attempt is
-recorded twice under different identities. Materialise it as a literal in the
-traced command like every other flag value.
+`--reviewer-session`. Re-running the same `review-decision` invocation is an
+idempotent replay only while the incoming file's bytes are unchanged: the helper
+keys a replay on the session, iter, draft hash and payload hash together. If the
+Reviewer produced different text, that is a new attempt and needs a new `K` —
+reusing the identifier makes the helper record it as a reused session, which
+counts as an invalid attempt, and two consecutive invalid attempts fail the
+sample closed. Materialise the value as a literal in the traced command like
+every other flag value.
 
 The Orchestrator treats the Reviewer final text as the only audit payload. Save
 that exact text with the `Write` tool to a temporary file outside the audit view;

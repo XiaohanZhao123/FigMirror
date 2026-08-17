@@ -14,15 +14,19 @@ Rules:
   - Only resize when the long edge exceeds the limit. A compliant image is left
     byte-identical; it is not re-encoded.
   - Always PNG in, PNG out. Never transcode to JPEG.
-  - Resize in place, and only ever on a staged audit_view copy. Two files must
-    never be passed in:
-      * `img_iter<N>.png` - the Drawer's output and the evaluator's input.
-      * `audit_view_<N>/composite.png` - `figannot.py compose` records its
-        native W/H/draft_x/draft_w in `composite_meta.json`, the Reviewer is
-        told to treat those as hard coordinate bounds, and `figannot.py draw`
-        clamps and renders the returned boxes against that same native
-        metadata. Resizing the image without resizing the metadata puts every
-        drawn box off-target while `draw` still exits 0.
+  - Resize in place, and only ever on a staged copy inside `audit_view_<N>/`.
+    Everything else in the workdir is either an original or carries geometry
+    that other steps depend on, so the check is on the containing directory,
+    not on the filename. Filename matching cannot express this invariant:
+    `reference_clean.png` exists both at `inputs/reference_clean.png` (the L1
+    measurement anchor the Drawer measures against, must never be touched) and
+    at `audit_view_<N>/reference_clean.png` (a staged copy, must be fitted).
+    `composite.png` is then the one exception inside that directory:
+    `figannot.py compose` records its native W/H/draft_x/draft_w in
+    `composite_meta.json`, the Reviewer treats those as hard coordinate bounds,
+    and `figannot.py draw` clamps and renders the returned boxes against the
+    same native metadata. Resizing it without resizing the metadata puts every
+    drawn box off-target while `draw` still exits 0.
   - Emit one JSON object per image so the applied factor can be recorded in
     `process.md` and used later to separate native-resolution reviews from
     heavily downscaled ones.
@@ -39,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -52,22 +57,29 @@ except ImportError:  # pragma: no cover - environment problem, not logic
     raise SystemExit(2)
 
 
-FORBIDDEN = ("composite.png",)
-FORBIDDEN_PREFIX = ("img_iter",)
+AUDIT_VIEW = re.compile(r"^audit_view_\d+$")
 
 
 def refuse(path: Path) -> str | None:
-    """Return a reason string if `path` must never be resized."""
-    if path.name in FORBIDDEN:
+    """Return a reason string if `path` must never be resized.
+
+    Resolve first, so a symlink or a `./` prefix cannot dress a protected
+    original up as a staged copy.
+    """
+    resolved = path.resolve()
+    if not AUDIT_VIEW.match(resolved.parent.name):
+        return (
+            f"only staged copies directly inside audit_view_<N>/ may be fitted; "
+            f"{resolved} sits in {resolved.parent.name or '/'}. Originals such as "
+            "inputs/reference_clean.png (the L1 measurement anchor), "
+            "inputs/reference_raw.png, img_iter<N>.png and "
+            "review_feedback_<N>/annotated.png must keep their native pixels"
+        )
+    if resolved.name == "composite.png":
         return (
             "composite.png carries the coordinate frame recorded in "
             "composite_meta.json; resizing it silently offsets every box that "
             "figannot.py draw renders"
-        )
-    if path.name.startswith(FORBIDDEN_PREFIX) and path.suffix == ".png":
-        return (
-            "img_iter<N>.png is the Drawer's output and the evaluator's input; "
-            "fit its staged audit_view copy instead"
         )
     return None
 
@@ -143,14 +155,20 @@ def main(argv: list[str] | None = None) -> int:
             sys.stderr.write(f"refusing {path}: {reason}\n")
         return 2
 
-    records = [fit_one(path, args.max_edge) for path in args.images]
-    for record in records:
-        print(json.dumps(record, sort_keys=True))
-
-    if args.report is not None:
-        args.report.write_text(
-            json.dumps(records, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
+    # A pixel change with no record is the exact failure this script exists to
+    # prevent, so the report is written even when a later image blows up.
+    records: list[dict] = []
+    try:
+        for path in args.images:
+            record = fit_one(path, args.max_edge)
+            records.append(record)
+            print(json.dumps(record, sort_keys=True))
+    finally:
+        if args.report is not None:
+            args.report.write_text(
+                json.dumps(records, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
 
     return 0
 
