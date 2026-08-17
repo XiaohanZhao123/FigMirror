@@ -40,14 +40,24 @@ an ordinary 2D task into 3D.
 
 - **Python runner** owns UI lifecycle, cancellation, Stage-0 bootstrap, optional
   data-gen, and launching the main Codex process.
-- **Codex Orchestrator + Drawer** run in the same top-level Codex process. This
-  process owns iteration state, drawing, local floor self-checks, Reviewer audit
-  staging, JSON parsing, stop decisions, and final selection.
-- **Reviewer** runs as a fresh-context `codex exec` audit with attached
-  reference/draft images. Do not expose it to `data.txt`, drawer notes, and source
-  code; the Orchestrator still owns the Reviewer invocation and parses its JSON.
-- **3D flow** uses the standard Orchestrator, Drawer, fresh-context Reviewer,
-  and optional candidate-scoring path for strict reproduction.
+- **The top-level Codex process is Orchestrator only.** It owns iteration state,
+  role dispatch, artifact checks, Reviewer audit-view staging, deterministic
+  review-gate invocation, stop decisions, and final selection.
+- **Drawer** runs as the named `figmirror-drawer` custom subagent through
+  `spawn_agent` with `fork_context=false`. It writes each iteration's matplotlib
+  script, render, notes, and floor self-check in the staged workdir.
+- **Reviewer** runs as the named `figmirror-reviewer` custom subagent through
+  `spawn_agent` with `fork_context=false`. It sees only the staged audit view:
+  the far-view composite, full-resolution reference/draft near views, the
+  Reviewer prompt, the aesthetic library, fixed diagnostics, and optional fixed
+  3D audit material. It returns strict
+  JSON including `boxes`; `figannot.py review-decision` validates and records the
+  result before any Drawer or finalization decision. The Orchestrator sends the task text and visual
+  bundle together in one structured `items` payload. The Reviewer must use
+  those attached pixels directly: Do not call `view_image` or reopen image
+  paths.
+- **3D flow** uses the standard Orchestrator plus named Drawer/Reviewer
+  subagents, and optional candidate-scoring path for strict reproduction.
 
 ## Workflow
 
@@ -55,7 +65,7 @@ an ordinary 2D task into 3D.
    - `references/preprocessor.md` for Stage-0 reference crop cleanup.
    - `references/orchestrator-codex.md` for loop wiring and stop conditions.
    - `references/drawer.md` for the Drawer instructions.
-   - `references/reviewer.md` for the fresh-context Reviewer instructions.
+   - `references/reviewer.md` for the Reviewer instructions.
    - `references/aesthetic-library.md` for the L2 convention library.
    - `references/three-d-prompting.md` only when the 3D insert gate is enabled.
 2. Preserve the uploaded reference as `inputs/reference_raw.png`, then run the
@@ -73,20 +83,42 @@ an ordinary 2D task into 3D.
    do not use that scorer for ordinary style transfer. The top-level
    Orchestrator owns final selection and must run the selected mode's
    rendered-image gates before copying any candidate to the final figure.
-5. In Codex, the top-level agent acts as both Orchestrator and Drawer. For each
-   iter, read `references/drawer.md`, write `figure_iter<N>.py`,
-   `img_iter<N>.png`, `notes_iter<N>.md`, and `floor_selfcheck_iter<N>.txt`
-   directly in the current Codex process, and verify those files before any
-   Reviewer handoff.
-6. Launch the Reviewer via the fresh-context `codex exec` path described in
-   `references/orchestrator-codex.md`. The Reviewer sees only the reference PNG,
-   draft PNG, aesthetic library, optional 3D insert, and prior audit JSON.
-7. Stop when the Reviewer returns a passing quality floor and a shipping verdict.
-   If the caller supplied `max_iters`, select the best floor-passing close iteration
-   when that limit is reached. If the caller enabled auto-until-shipped, keep
-   iterating until `ship` or a real blocker.
-8. Write final `figure.py`, `figure.png`, `figure.pdf`, `selection.md`, and
-   `process.md`.
+   Always stage `scripts/figannot.py`; it is the deterministic operator for
+   building audit composites and drawing Reviewer boxes.
+5. In Codex, the top-level agent follows `references/orchestrator-codex.md` and
+   spawns `figmirror-drawer` for each iter. Every Drawer prompt includes the
+   exact trace line `Iter: <N>` with the current non-negative decimal iteration.
+   The Drawer writes
+   `figure_iter<N>.py`, `img_iter<N>.png`, `notes_iter<N>.md`, and
+   `floor_selfcheck_iter<N>.txt`; the Orchestrator verifies those files before
+   any Reviewer handoff.
+6. Stage `audit_view_<N>`, run `scripts/figannot.py compose` to create
+   `composite.png` and `review_prompt.txt`, and spawn `figmirror-reviewer` as
+   described in `references/orchestrator-codex.md`. Attach `composite.png`,
+   `reference_clean.png`, and `draft_fullres.png` exactly once as structured
+   local-image items; attach the optional strict-3D accepted control once when
+   present. The Reviewer sees only those images plus the aesthetic library,
+   fixed diagnostics, and optional 3D insert, then returns strict JSON without
+   reopening image paths or reading review/Drawer history.
+7. Run `scripts/figannot.py review-decision` after every Reviewer result. A
+   clean result before the run reaches `min_reviews` total valid Reviewer calls
+   starts another Reviewer on the same immutable draft with no Drawer in between.
+   Actionable feedback permits `scripts/figannot.py draw --max-iters <max_iters>`
+   and another Drawer when below the hard `max_iters` cap. The helper must
+   succeed before spawning that Drawer. A missing, malformed, empty, or inconsistent
+   Reviewer result returns `retry_reviewer`: it does not count, never triggers
+   Drawer, and starts one fresh Reviewer on the same immutable draft. A second
+   consecutive invalid result fails closed. Pass both `--min-reviews` and
+   `--max-iters` to every `review-decision` invocation.
+8. Stop when the deterministic gate returns `ship`: the quality floor passed,
+   the verdict is clean, and at least `min_reviews` valid Reviewer calls have
+   completed across the run. Default `max_iters=5`; it is always a hard Drawer
+   cap. If the gate returns `stop_at_cap`, do not draw again: select under the
+   existing hard-cap policy and finalize an existing iteration.
+9. Write final `figure.py`, `figure.png`, `figure.pdf`, `output.png`,
+   `floor_selfcheck_final.txt`, `selection.md`, `process.md`, and `status.json`.
+   `output.png` is the evaluator-facing PNG and may be identical to
+   `figure.png`.
 
 ## Artifact Layout
 
@@ -108,30 +140,49 @@ an ordinary 2D task into 3D.
     three-d-prompting.md  # router, only for 3D runs
     three-d/              # mode files and routed 3D modules, only for 3D runs
   tools/
+    figannot.py
     score_3d_candidates.py  # optional for strict 3D candidate diagnosis
   figure_iter0.py
   img_iter0.png
   notes_iter0.md
   floor_selfcheck_iter0.txt
+  review_attempts/
+    attempt_000.json
+    attempt_001.json
   audit_view_0/
     reference_clean.png
-    img_iter0.png
+    draft_fullres.png
+    composite.png
+    composite_meta.json
+    review_prompt.txt
     aesthetic-library.md
     three-d-prompting.md  # router, only for 3D runs
     three-d/              # mode files and routed 3D modules, only for 3D runs
+  review_feedback_0/
+    review.json
+    annotated.png
+    notes.md
   audit_iter0.json
   audit_iter0.stderr
   ...
   figure.py
   figure.png
   figure.pdf
+  output.png
+  floor_selfcheck_final.txt
   selection.md
   process.md
+  status.json
 ```
 
 ## Non-Negotiables
 
-- The reference is a style anchor, not a layout-number anchor.
+- The reference is a style anchor, not a layout-number anchor — but the chart type
+  and signature motifs ARE style, not layout numbers. Reproduce them.
+- Preserve the source's signature visual motifs — chart type, colorbars, shaded/error
+  bands, error bars, streamline fields, stacked/offset construction, insets. Dropping
+  or flattening one is a fidelity failure, not a simplification. Only the data values
+  and labels change to match `data.txt`.
 - `inputs/reference_raw.png` is the preserved upload; `inputs/reference_clean.png`
   is the Stage-0 crop used for L1 measurement.
 - Every visual choice must be grounded in L1 (reference image) or L2
