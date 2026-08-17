@@ -39,23 +39,25 @@ an ordinary 2D task into 3D.
 ## Architecture
 
 - **Python runner** owns UI lifecycle, cancellation, Stage-0 bootstrap, optional
-  data-gen, and launching the main Codex process.
-- **The top-level Codex process is Orchestrator only.** It owns iteration state,
+  data-gen, and launching the main `claude` process.
+- **The top-level `claude` process is Orchestrator only.** It owns iteration state,
   role dispatch, artifact checks, Reviewer audit-view staging, deterministic
   review-gate invocation, stop decisions, and final selection.
-- **Drawer** runs as the named `figmirror-drawer` custom subagent through
-  `spawn_agent` with `fork_context=false`. It writes each iteration's matplotlib
+- **Drawer** runs as the named `figmirror-drawer` custom subagent through the
+  `Task` tool with `subagent_type="figmirror-drawer"` and
+  `run_in_background=false`. It writes each iteration's matplotlib
   script, render, notes, and floor self-check in the staged workdir.
-- **Reviewer** runs as the named `figmirror-reviewer` custom subagent through
-  `spawn_agent` with `fork_context=false`. It sees only the staged audit view:
+- **Reviewer** runs as the named `figmirror-reviewer` custom subagent through the
+  `Task` tool with `subagent_type="figmirror-reviewer"` and
+  `run_in_background=false`. It sees only the staged audit view:
   the far-view composite, full-resolution reference/draft near views, the
   Reviewer prompt, the aesthetic library, fixed diagnostics, and optional fixed
   3D audit material. It returns strict
   JSON including `boxes`; `figannot.py review-decision` validates and records the
-  result before any Drawer or finalization decision. The Orchestrator sends the task text and visual
-  bundle together in one structured `items` payload. The Reviewer must use
-  those attached pixels directly: Do not call `view_image` or reopen image
-  paths.
+  result before any Drawer or finalization decision. The `Task` tool carries a
+  single text prompt and has no attachment channel, so the Orchestrator gives
+  the Reviewer an ordered list of absolute image paths and the Reviewer opens
+  each one with `Read`, once, in that order.
 - **3D flow** uses the standard Orchestrator plus named Drawer/Reviewer
   subagents, and optional candidate-scoring path for strict reproduction.
 
@@ -63,7 +65,9 @@ an ordinary 2D task into 3D.
 
 1. Read these bundled references from this skill directory:
    - `references/preprocessor.md` for Stage-0 reference crop cleanup.
-   - `references/orchestrator-codex.md` for loop wiring and stop conditions.
+   - `references/orchestrator-claude.md` for loop wiring and stop conditions.
+     `references/orchestrator-codex.md` ships alongside it as the diff baseline
+     for the port and must not be followed at runtime.
    - `references/drawer.md` for the Drawer instructions.
    - `references/reviewer.md` for the Reviewer instructions.
    - `references/aesthetic-library.md` for the L2 convention library.
@@ -85,19 +89,20 @@ an ordinary 2D task into 3D.
    rendered-image gates before copying any candidate to the final figure.
    Always stage `scripts/figannot.py`; it is the deterministic operator for
    building audit composites and drawing Reviewer boxes.
-5. In Codex, the top-level agent follows `references/orchestrator-codex.md` and
-   spawns `figmirror-drawer` for each iter. Every Drawer prompt includes the
+5. The top-level agent follows `references/orchestrator-claude.md` and
+   dispatches `figmirror-drawer` for each iter. Every Drawer prompt includes the
    exact trace line `Iter: <N>` with the current non-negative decimal iteration.
    The Drawer writes
    `figure_iter<N>.py`, `img_iter<N>.png`, `notes_iter<N>.md`, and
    `floor_selfcheck_iter<N>.txt`; the Orchestrator verifies those files before
    any Reviewer handoff.
 6. Stage `audit_view_<N>`, run `scripts/figannot.py compose` to create
-   `composite.png` and `review_prompt.txt`, and spawn `figmirror-reviewer` as
-   described in `references/orchestrator-codex.md`. Attach `composite.png`,
-   `reference_clean.png`, and `draft_fullres.png` exactly once as structured
-   local-image items; attach the optional strict-3D accepted control once when
-   present. The Reviewer sees only those images plus the aesthetic library,
+   `composite.png` and `review_prompt.txt`, fit the staged near views with
+   `scripts/fit_images.py`, and dispatch `figmirror-reviewer` as
+   described in `references/orchestrator-claude.md`. List `composite.png`,
+   `reference_clean.png`, and `draft_fullres.png` as an ordered set of absolute
+   paths for the Reviewer to `Read` exactly once each; append the optional
+   strict-3D accepted control as a fourth entry when present. The Reviewer sees only those images plus the aesthetic library,
    fixed diagnostics, and optional 3D insert, then returns strict JSON without
    reopening image paths or reading review/Drawer history.
 7. Run `scripts/figannot.py review-decision` after every Reviewer result. A
@@ -135,7 +140,7 @@ an ordinary 2D task into 3D.
     preprocessor.md
     drawer.md
     reviewer.md
-    orchestrator-codex.md
+    orchestrator-claude.md
     aesthetic-library.md
     three-d-prompting.md  # router, only for 3D runs
     three-d/              # mode files and routed 3D modules, only for 3D runs

@@ -1,32 +1,30 @@
 # MANIFEST — Claude-side FigMirror bundle provenance
 
-Source: `.codex/skills/figmirror` in this repo, at commit `388e3c8b269c3a352bd30d15f1ca983f4880776d`.
-Copied byte-for-byte on 2026-08-17. `__pycache__` excluded.
+Source: `.codex/skills/figmirror` in this repo, at commit `da9c64be07ae95065eea46e8a84cea4aea23015a`.
+Copied 2026-08-17. `__pycache__` excluded.
 
-Every file below is identical to its Codex counterpart. Harness adaptation
-lives in files ADDED alongside these (`references/orchestrator-claude.md`,
-the agent definitions under `.claude/agents/`), never in edits to these.
+## Ported byte-for-byte
 
-Verify with:
+These carry no harness-specific content and are identical to their Codex
+counterparts. Verify with:
 
 ```
-diff -r --exclude=__pycache__ --exclude=MANIFEST.md \
+diff -r --exclude=__pycache__ \
+  --exclude=MANIFEST.md --exclude=SKILL.md \
+  --exclude=orchestrator-claude.md --exclude=fit_images.py \
   .codex/skills/figmirror .claude/skills/figmirror
 ```
 
-It must print nothing. This file is excluded because it does not exist on
-the Codex side.
+It must print nothing.
 
 | sha256 | file |
 |---|---|
-| `8f2adb116bb97879dfb6daa17b54e00f04486945e19760845bdc7b63fb01eb58` | `SKILL.md` |
 | `86ce4af438bbf854086c13ac08f905af1892b94999862aa0b63610031de160ae` | `agents/openai.yaml` |
 | `e464be689dad19e19a0b6eca58bfc5d1b30bdcb2eac380f6186c06b5192e2c0d` | `references/aesthetic-library.md` |
 | `0805d5c19b20604db739869fdf9c386e6cc7038c573120fc7e5b6ec73c2efd5a` | `references/drawer.md` |
 | `4d25e9addbda05c54eb6e1bef094f7ba66a01557e04a92d24bae0a4d83b401f1` | `references/orchestrator-codex.md` |
 | `534297b10db767c1f3d45d06452abb71af8e789cbb3d80cb8c77a672140e6f94` | `references/preprocessor.md` |
 | `342cb1c9e66ac6b6a7df4b1a676cf6fb331a109f733df12bc5c1bad4786c6a1f` | `references/reviewer.md` |
-| `2f402f63996f3eb4f477c308185bf16fa43323b424d60eb84f6783dea2c36239` | `references/three-d-prompting.md` |
 | `3e25ed3fbf490d389b62b22b8ef2a3ddce2adaf78ac56aa9f6e350788bddcd4c` | `references/three-d/candidate-selection.md` |
 | `8ce47378537fcade3148456e7c131ca655ab20a058811e78d178cf08b7440923` | `references/three-d/core.md` |
 | `7d30e282607643dca9801e44cfed4c3e20bf0ffdb67427a80d2c2d8d2a1e428d` | `references/three-d/extrema-fold-network.md` |
@@ -41,5 +39,36 @@ the Codex side.
 | `96f2e3d3cba7a3bd12df8009788dbcdbed6d4c04852fa21818074b1e4c6e4858` | `references/three-d/style-transfer.md` |
 | `863faeaabacb531b6758ac5e2ccd3e3534fc72c20da56e8d9c0af17f610f0da5` | `references/three-d/surfaces.md` |
 | `8058c83f8e6453e39ed0e08c62f45288eb1b9d8c57733e2676d53e45f162fd21` | `references/three-d/volumetric-surfaces.md` |
+| `2f402f63996f3eb4f477c308185bf16fa43323b424d60eb84f6783dea2c36239` | `references/three-d-prompting.md` |
 | `bad12db349a7385b58e73bac65c4b8683d24f6d346777bbdee91f1b0531fa2ec` | `scripts/figannot.py` |
 | `2c96431c71edbc458107f9fcdb2b848d25dc58334512dfb214abd9a2ce77c31d` | `scripts/score_3d_candidates.py` |
+
+`references/orchestrator-codex.md` is in that list on purpose. It is not
+followed at runtime; it is kept as the diff baseline that makes every change
+in `orchestrator-claude.md` reviewable.
+
+## Adapted for this harness
+
+`SKILL.md` is the entry point Claude actually loads, so it cannot stay
+byte-identical: the Codex version names `orchestrator-codex.md`, `spawn_agent`,
+`fork_context`, and the `items` image-attachment channel, none of which exist
+here. Changed lines, and nothing else:
+
+- "main Codex process" / "top-level Codex process" -> "main `claude` process"
+- Drawer and Reviewer dispatch: `spawn_agent` + `fork_context=false` ->
+  `Task` with `subagent_type` + `run_in_background=false`
+- Reviewer image delivery: one structured `items` payload of attached pixels
+  plus a no-`view_image` rule -> an ordered list of absolute paths the
+  Reviewer opens with `Read`, once each
+- Loop-wiring reference and staged prompt filename: `orchestrator-codex.md` ->
+  `orchestrator-claude.md`
+- Step 6 additionally names `scripts/fit_images.py`
+
+No step, budget, artifact name, or decision rule changed.
+
+## Added for this harness
+
+| sha256 | file | why |
+|---|---|---|
+| `878532ce61b21bc87e4b5140e72350b255435b6566b4209c6382f9eb5d47a88e` | `references/orchestrator-claude.md` | Dispatch-mechanism port of orchestrator-codex.md. Algorithm, decision state machine, iteration budget and fail-closed rules unchanged. |
+| `dff709eb67d599b854b3301e7dc8006ffc55ef03b7fc5c971bf316ffcc1f05f5` | `scripts/fit_images.py` | Fits staged near views to the 2000px delivery limit so the delivered pixels are a recorded property of the run. Refuses composite.png and img_iter*.png. |

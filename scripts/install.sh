@@ -185,10 +185,15 @@ validate_three_d_layout() {
 }
 
 if [[ "${INSTALL_CLAUDE:-}" == 1 ]]; then
-  require_file ".claude/agents/figure-preprocessor.md"
-  require_file ".claude/agents/figure-illustrator.md"
-  require_file ".claude/agents/figure-critic.md"
+  require_file ".claude/agents/figmirror-drawer.md"
+  require_file ".claude/agents/figmirror-reviewer.md"
   require_file ".claude/skills/figmirror/SKILL.md"
+  require_file ".claude/skills/figmirror/MANIFEST.md"
+  require_file ".claude/skills/figmirror/references/orchestrator-claude.md"
+  require_file ".claude/skills/figmirror/references/orchestrator-codex.md"
+  require_file ".claude/skills/figmirror/references/drawer.md"
+  require_file ".claude/skills/figmirror/references/reviewer.md"
+  require_file ".claude/skills/figmirror/references/preprocessor.md"
   require_file ".claude/skills/figmirror/references/aesthetic-library.md"
   require_file ".claude/skills/figmirror/references/three-d-prompting.md"
   require_file ".claude/skills/figmirror/references/three-d/core.md"
@@ -205,7 +210,8 @@ if [[ "${INSTALL_CLAUDE:-}" == 1 ]]; then
   require_file ".claude/skills/figmirror/references/three-d/marks-and-panels.md"
   require_file ".claude/skills/figmirror/references/three-d/reviewer-scorecard.md"
   require_file ".claude/skills/figmirror/references/three-d/repair-feedback.md"
-  require_file ".claude/skills/figmirror/references/iter-loop-spec.md"
+  require_file ".claude/skills/figmirror/scripts/figannot.py"
+  require_file ".claude/skills/figmirror/scripts/fit_images.py"
   require_file ".claude/skills/figmirror/scripts/score_3d_candidates.py"
   validate_three_d_layout ".claude/skills/figmirror"
 fi
