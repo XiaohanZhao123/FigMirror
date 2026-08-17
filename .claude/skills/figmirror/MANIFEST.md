@@ -71,11 +71,19 @@ none of which exist here. Changed lines, and nothing else:
 - Step 6 additionally names `scripts/fit_images.py`; the artifact layout adds
   `tools/fit_images.py` and `image_fit_<N>.json`
 
-No step, budget, artifact name, or decision rule changed.
+No budget, artifact name, or decision rule changed. Two steps gained a
+harness-specific detail rather than a new requirement: step 2 names how the
+Stage-0 preprocessor is dispatched here, and step 6 names `fit_images.py`.
 
 ## Added for this harness
 
+The first two live outside the skill directory, so the diff recipe above does
+not reach them. Verify their bodies against the Codex role files directly.
+
+
 | sha256 | file | why |
 |---|---|---|
-| `0076e07bb5181d4652fc5d44fd91e9a8803b8e7cafab06fca947b690a09e795e` | `references/orchestrator-claude.md` | Dispatch-mechanism port of orchestrator-codex.md. Algorithm, decision state machine, iteration budget and fail-closed rules unchanged. |
+| `957afac333a91659a13328c09a53c37db14cffa2f675049fe03b32b5ed2b073c` | `.claude/agents/figmirror-drawer.md` | Role definition. Body is the `developer_instructions` string of `.codex/agents/figmirror-drawer.toml`, verbatim; the YAML frontmatter is new. |
+| `cd21dd63bb85f4e1b199fc9f71cea35e2310d0974f807909e8658a4f9b9c4006` | `.claude/agents/figmirror-reviewer.md` | Role definition. Body is the `developer_instructions` string of `.codex/agents/figmirror-reviewer.toml`, verbatim; the YAML frontmatter is new. |
+| `0edd118a891aa670bb2aaade2fc633eb8d7af1bc2f7941a31f7f6642c17542e8` | `references/orchestrator-claude.md` | Dispatch-mechanism port of orchestrator-codex.md. Algorithm, decision state machine, iteration budget and fail-closed rules unchanged. |
 | `121b4880c7c1d88a9b42925846f7301866f389ed82ddb5b6c57996a463950201` | `scripts/fit_images.py` | Fits staged audit-view images to the 2000px delivery limit so the delivered pixels are a recorded property of the run. Refuses any path outside audit_view_<N>/, and composite.png inside it. |

@@ -14,9 +14,11 @@ action after each deterministic decision, selection, and finalization. It
 delegates drawing to the named `figmirror-drawer` subagent and visual review to
 the named `figmirror-reviewer` subagent using `Task` with
 `subagent_type` set to that exact name; generic `general-purpose` / `Explore` /
-`Plan` roles are not valid substitutes. An unknown `subagent_type` is a hard
-error naming the available agents — treat that error as a fatal configuration
-fault and stop the sample; never fall back to a generic role. Candidate-pool
+`Plan` roles are not valid substitutes **for these two roles**. An unknown
+`subagent_type` is a hard error naming the available agents — treat that error
+as a fatal configuration fault and stop the sample; never fall back to a generic
+role for drawing or review. The Stage-0 preprocessor is the one exception: it
+has no named role here or on Codex, and runs as a general-purpose subagent. Candidate-pool
 generation is an optional host-level mode and is outside the default shipped
 loop.
 
@@ -70,7 +72,7 @@ PYTHON_CMD=${FIGMIRROR_PYTHON_CMD:-"uv run --project $REPO python"}
 ```
 
 Use `PYTHON_CMD` for every Python invocation in this workflow, including
-`tools/figannot.py` help/compose/review-decision/draw, Drawer render checks, and final
+`tools/figannot.py` help/compose/check-drawer-bundle/review-decision/draw, Drawer render checks, and final
 bundle execution. Bare `python` / `python3` commands are not valid in this repo.
 Do not run Python just to summarize `inputs/data.txt` when `data_echo.md` is
 already present; read the staged summary and inspect `inputs/data.txt` directly
@@ -114,10 +116,42 @@ The uploaded reference image must be preserved as
 0 overwrites it with the cleaned crop. The parsed or original data must be stored
 as `$WORKDIR/inputs/data.txt`.
 
+## What the runner must provide
+
+This document is not self-sufficient. The following come from the caller, and
+none of them has a usable default; if one is missing, stop rather than guess.
+
+| Value | Delivered as | Missing behaviour |
+|---|---|---|
+| `WORKDIR` | absolute path in the task prompt | stop |
+| `SKILL_DIR` | absolute path in the task prompt | stop |
+| `FIGMIRROR_PYTHON_CMD` | environment variable | stop; the `uv run --project <repo> python` default in Setup is a placeholder, not a working value |
+| `max_iters` | task prompt, integer | default 5 |
+| `min_reviews` | task prompt, integer | default 2 |
+| `inputs/reference_raw.png`, `inputs/data.txt` | staged on disk before dispatch | stop |
+
+`REPO` in the Setup block exists only so `PYTHON_CMD` has a readable shape. It
+is not resolvable from inside the skill package: the skill may be installed
+under a Claude config directory with no repository above it. Treat a run where
+`FIGMIRROR_PYTHON_CMD` was not injected as a configuration fault — every Python
+call in this workflow needs Pillow, so it fails at the first `compose` either
+way, just later and with a less obvious message.
+
 ## Stage 0: Reference Preprocessing
 
 Before data generation, Drawer, or Reviewer, run the reference preprocessor as a
-separate bounded agent/process using `prompts/preprocessor.md`. It must read
+separate bounded agent using `prompts/preprocessor.md`. Dispatch it with `Task`
+and `run_in_background = false`, as a general-purpose subagent — there is no
+named preprocessor role, on this harness or on Codex, and the
+named-role requirement above applies only to Drawer and Reviewer. Give it the
+absolute paths it needs and nothing else; it is a bounded one-shot pass, not a
+participant in the loop.
+
+If the runner has already produced `inputs/reference_clean.png` and
+`inputs/reference_crop_report.md` before the loop starts, skip this stage rather
+than redoing it. What is never acceptable is silently proceeding with
+`reference_clean.png` still a copy of the raw upload: every later round measures
+against it, so an unprocessed anchor degrades the whole run without any signal. It must read
 `inputs/reference_raw.png`, crop away removable whitespace/captions/page text or
 neighboring panels, compare the before/after crop, and write:
 
@@ -162,16 +196,19 @@ flag may create Drawer round `max_iters` or later:
    wait through and no patience window to observe. Re-dispatch the same Drawer
    role with a sharper repair task only when the returned bundle is still
    incomplete. Prove that condition by running
-   `/absolute/path/to/run-directory/tools/figannot.py check-drawer-bundle
-   --workdir /absolute/path/to/run-directory --iter N` after the `Task` returns
-   and before any replacement dispatch. Substitute the actual absolute paths in
+   `<PYTHON_CMD> /absolute/path/to/run-directory/tools/figannot.py
+   check-drawer-bundle --workdir /absolute/path/to/run-directory --iter N`
+   after the `Task` returns and before any replacement dispatch. The
+   `PYTHON_CMD` prefix is required: the staged script is copied with mode 0644,
+   so running it directly gives a permission error, and its shebang resolves to
+   an interpreter without Pillow. Substitute the actual absolute paths in
    this trace-critical command; do not pass `$WORKDIR`, `$FIGANNOT`, or relative path tokens.
    A nonzero result naming at least one missing bundle file is the
    only authorization for one narrower same-iteration replacement; do not draw
    inline as Orchestrator.
 4. Orchestrator stages `audit_view_<N>`, builds `composite.png` with
-   `tools/figannot.py compose`, fits every staged image to the delivery limit
-   (see "Image fitting" below), and dispatches `Task` with
+   `tools/figannot.py compose`, fits the staged near views to the delivery limit
+   (never `composite.png`; see "Image fitting" below), and dispatches `Task` with
    `subagent_type = "figmirror-reviewer"` and `run_in_background = false`. The
    Reviewer task text carries an explicit ordered list of absolute image paths
    that the Reviewer must open with `Read`, once each, in that order. The
@@ -606,9 +643,13 @@ drafts. Instead:
    child task, and the same ordered absolute-path image list. Keep the same
    read-once, read-nothing-else rule. Do not expose the invalid result.
 2. If it fails again, let `review-decision` persist the exhausted invalid
-   attempt and exit nonzero. Write the reason to `REVIEWER_FAILED`, record it in
-   `process.md`, stop the sample nonzero, and do not finalize or select any
-   iteration.
+   attempt. Its nonzero exit happens inside a tool call and never becomes the
+   orchestrator process's exit code — a model cannot set that — so on this
+   harness the failure signal is a file: write the reason to
+   `$WORKDIR/REVIEWER_FAILED`, record it in `process.md`, and stop. Do not
+   finalize, do not select any iteration, and do not write a `status.json`
+   claiming success. The runner treats the presence of `REVIEWER_FAILED` as a
+   crashed sample.
 
 Do not synthesize a `reviewer_unavailable` audit: it would have no valid Reviewer
 terminal payload or matching ledger transition. A fabricated audit of any

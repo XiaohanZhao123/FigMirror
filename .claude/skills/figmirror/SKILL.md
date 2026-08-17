@@ -38,7 +38,7 @@ an ordinary 2D task into 3D.
 
 ## Architecture
 
-- **Python runner** owns UI lifecycle, cancellation, Stage-0 bootstrap, optional
+- **Python runner** owns UI lifecycle, cancellation, optional
   data-gen, and launching the main `claude` process.
 - **The top-level `claude` process is Orchestrator only.** It owns iteration state,
   role dispatch, artifact checks, Reviewer audit-view staging, deterministic
@@ -75,6 +75,10 @@ an ordinary 2D task into 3D.
 2. Preserve the uploaded reference as `inputs/reference_raw.png`, then run the
    reference preprocessor to write `inputs/reference_clean.png`,
    `inputs/reference_crop_check.png`, and `inputs/reference_crop_report.md`.
+   It is dispatched as a general-purpose subagent — there is no named
+   preprocessor role — per the Stage 0 section of
+   `references/orchestrator-claude.md`. Skip it only when the runner already
+   staged those three files.
 3. Echo the parsed data structure before drawing. If the user explicitly asked you
    to make up data or proceed without confirmation, record that in `data_echo.md`
    and continue; otherwise ask for confirmation.
