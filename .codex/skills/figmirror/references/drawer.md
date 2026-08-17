@@ -58,7 +58,8 @@ diverge. Defeat both.
   `inputs/reference_clean.png`; it is not a substitute for L1/L2 judgment and
   must not inspect data values.
 - For `N > 0`, prior annotated visual feedback:
-  `audit_view_<N-1>/annotated.png` and `audit_view_<N-1>/notes.md`. The image is
+  `review_feedback_<N-1>/annotated.png` and
+  `review_feedback_<N-1>/notes.md`. The image is
   a reference|draft composite with numbered boxes on the draft side; the notes
   map each number to the mismatch the Reviewer wants fixed.
 - A working directory you own. You may write narrowly scoped helper files there,
@@ -199,8 +200,8 @@ When the Reviewer flags spacing, proportion, or bar geometry, translate the visu
 target into code carefully, then render and measure the draft before handoff.
 
 For `N > 0`, start with the prior boxed visual feedback. Open
-`audit_view_<N-1>/annotated.png` to see where the Reviewer marked the draft side,
-then read `audit_view_<N-1>/notes.md` for the numbered action list. Re-check
+`review_feedback_<N-1>/annotated.png` to see where the Reviewer marked the draft
+side, then read `review_feedback_<N-1>/notes.md` for the numbered action list. Re-check
 those boxed areas before broader polish. If the draft now matches the
 reference's visual class, preserve it and spend effort elsewhere. Repair only
 the unresolved boxed mismatches. For proportion or spacing, change the draft

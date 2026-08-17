@@ -6,7 +6,8 @@ this skill package at runtime.
 
 Codex runtime shape: the top-level Codex process is Orchestrator only. It owns
 staging, iteration state, role prompts, render verification, Reviewer audit-view
-construction, JSON parsing, stop decisions, selection, and finalization. It
+construction, subagent dispatch through `spawn_agent` / `wait_agent`, the next
+action after each deterministic decision, selection, and finalization. It
 delegates drawing to the named `figmirror-drawer` subagent and visual review to
 the named `figmirror-reviewer` subagent using `spawn_agent` with
 `fork_context = false`; generic `default` / `worker` / `explorer` roles are not
@@ -18,9 +19,11 @@ The Orchestrator must not create or edit per-iteration drawing artifacts
 `floor_selfcheck_iter<N>.txt`) itself. Those files are Drawer-owned protocol
 outputs. After spawning Drawer, wait long enough for real production work before
 declaring the role unavailable: wait at least 20 minutes for iter 0 and at least
-10 minutes for later iters. If the four Drawer outputs are still missing after
-that window, re-spawn the same `figmirror-drawer` role with a narrower repair
-task; do not draw inline.
+10 minutes for later iters. A wait timeout with no terminal agent state means the Drawer is still running;
+continue waiting on that same child. Do not close or re-spawn a Drawer solely because a wait timed out.
+Only a terminal child state with an incomplete four-file bundle may trigger a re-spawn of the same
+`figmirror-drawer` role with a narrower repair task. Do not call `close_agent` on
+a live Drawer to manufacture that terminal state; do not draw inline.
 
 The Orchestrator must also not perform visual/style judgment itself, even as a
 "sanity look" at `img_iter<N>.png` or `composite.png`. Its checks are
@@ -49,7 +52,7 @@ PYTHON_CMD=${FIGMIRROR_PYTHON_CMD:-"uv run python"}
 ```
 
 Use `PYTHON_CMD` for every Python invocation in this workflow, including
-`tools/figannot.py` help/prepare/compose/draw, Drawer render checks, and final
+`tools/figannot.py` help/compose/review-decision/draw, Drawer render checks, and final
 bundle execution. Bare `python` / `python3` commands are not valid in this repo.
 Do not run Python just to summarize `inputs/data.txt` when `data_echo.md` is
 already present; read the staged summary and inspect `inputs/data.txt` directly
@@ -63,7 +66,6 @@ cp "$REFERENCES/drawer.md" "$WORKDIR/prompts/drawer.md"
 cp "$REFERENCES/preprocessor.md" "$WORKDIR/prompts/preprocessor.md"
 cp "$REFERENCES/reviewer.md" "$WORKDIR/prompts/reviewer.md"
 cp "$REFERENCES/orchestrator-codex.md" "$WORKDIR/prompts/orchestrator-codex.md"
-cp "$REFERENCES/aesthetic-library.md" "$WORKDIR/prompts/aesthetic-library.md"
 cp "$REFERENCES/aesthetic-library.md" "$WORKDIR/prompts/aesthetic-library.md"
 cp "$REFERENCES/aesthetic-library.md" "$WORKDIR/inputs/aesthetic-library.md"
 cp "$SKILL_DIR/scripts/figannot.py" "$WORKDIR/tools/figannot.py"
@@ -110,11 +112,14 @@ crop` in the report.
 
 ## Per-Iteration Loop
 
-Use the `max_iters` value provided by the caller/runner. If no value is
-provided, default to `max_iters = 6`. Iterate `N = 0..max_iters-1`.
-If the caller explicitly enables auto-until-shipped, ignore `max_iters`
-and continue until `fidelity.verdict` is `ship`, cancellation, or a real
-protocol/blocking failure:
+Use the `max_iters` and `min_reviews` values provided by the caller/runner. If
+no values are provided, default to `max_iters = 5` Drawer rounds and
+`min_reviews = 2` valid Reviewer calls in total across all drafts. `N` counts
+Drawer rounds only; repeated review of one immutable draft does not advance
+`N`.
+Iterate Drawer rounds as `N = 0..max_iters-1`.
+`max_iters` is a hard Drawer cap. No auto mode, prompt instruction, or runtime
+flag may create Drawer round `max_iters` or later:
 
 1. Orchestrator spawns `agent_type = "figmirror-drawer"` with
    `fork_context = false`. The Drawer task names `$WORKDIR` and `N`, instructs
@@ -124,8 +129,8 @@ protocol/blocking failure:
    `tools/score_3d_candidates.py` when quantitative 3D candidate diagnosis is
    enabled, `inputs/reference_clean.png`, `inputs/reference_crop_report.md` if
    present, `inputs/data.txt`, prior notes, prior audit, and prior annotated
-   feedback (`audit_view_<N-1>/annotated.png` plus
-   `audit_view_<N-1>/notes.md`) if `N > 0`.
+   feedback (`review_feedback_<N-1>/annotated.png` plus
+   `review_feedback_<N-1>/notes.md`) if `N > 0`.
 2. Drawer writes `figure_iter<N>.py`, `img_iter<N>.png`, `notes_iter<N>.md`,
    and `floor_selfcheck_iter<N>.txt` in `$WORKDIR`. It must not launch `codex`,
    `claude`, or another model process.
@@ -135,23 +140,73 @@ protocol/blocking failure:
 3. Orchestrator verifies the four iter artifacts are non-empty before any
    Reviewer handoff. If anything is missing before the patience window has
    elapsed, keep waiting on the same Drawer. Use `wait_agent` timeouts of at
-   least 20 minutes for iter 0 and 10 minutes for later iters. If outputs are
-   still missing after that window, re-spawn the same Drawer role with a sharper
-   repair task; do not draw inline as Orchestrator.
+   least 20 minutes for iter 0 and 10 minutes for later iters. A wait timeout
+   without a terminal state keeps ownership with the same live child: wait on
+   it again, even when no output exists yet. Re-spawn the same Drawer role with
+   a sharper repair task only after that child reaches a terminal state and the
+   bundle is still incomplete. Prove that condition by running
+   `/absolute/path/to/run-directory/tools/figannot.py check-drawer-bundle
+   --workdir /absolute/path/to/run-directory --iter N` after the terminal wait
+   and before any replacement spawn. Substitute the actual absolute paths in
+   this trace-critical command; do not pass `$WORKDIR`, `$FIGANNOT`, or relative path tokens.
+   A nonzero result naming at least one missing bundle file is the
+   only authorization for one narrower same-iteration replacement; do not draw
+   inline as Orchestrator.
 4. Orchestrator stages `audit_view_<N>`, builds `composite.png` with
    `tools/figannot.py compose`, and spawns `agent_type = "figmirror-reviewer"`
-   with `fork_context = false`. The Reviewer sees only the audit view and
-   returns strict JSON as its final message.
-5. Orchestrator parses the Reviewer final JSON, writes it to
-   `audit_view_<N>/review.json` and `audit_iter<N>.json`, then runs
-   `tools/figannot.py draw` to create `audit_view_<N>/annotated.png` and
-   `audit_view_<N>/notes.md` for the next Drawer.
-6. If `quality_floor.passed=false`, continue unless a non-auto hard cap is reached.
-7. If `fidelity.verdict` is `ship`, select this iter.
-8. If `fidelity.verdict=close`, run one more pass while budget remains, or always in auto mode.
-9. If `fidelity.verdict=off`, continue while budget remains, or always in auto mode when there is a clear next revision.
+   with `fork_context = false`. Send the complete Reviewer task and visual
+   bundle in one structured `items` payload, with one text item followed by the
+   composite, reference, and draft local-image items exactly once. The Reviewer
+   sees only the audit view, does not reopen image paths, and returns strict JSON
+   as its final message.
+5. Orchestrator saves the Reviewer final JSON to a temporary incoming file
+   outside the audit view. The incoming filename must contain the exact Reviewer session ID,
+   for example `.review_incoming_<reviewer-session-id>.json`. It MUST NOT interpret
+   the fields or write a canonical audit itself. Run `tools/figannot.py review-decision` with the incoming JSON,
+   `$WORKDIR`, `N`, `img_iter<N>.png`, the fresh Reviewer child session ID, and
+   `min_reviews`, and `max_iters`. The helper performs file validation and the
+   atomic decision-state transition only: it never launches a subagent or
+   chooses an unreturned next action. For a valid result it records the attempt
+   and returns exactly one action for the top-level Orchestrator to follow.
+   Missing, malformed, non-object, or internally inconsistent Reviewer output is
+   recorded as an invalid terminal attempt and does not count. The first such
+   result returns `retry_reviewer`; a second consecutive invalid result is
+   persisted and exits nonzero.
+   The valid actions are:
+   - `retry_reviewer`: the result is invalid and does not count. Retry this
+     review slot once with a fresh Reviewer on the same immutable draft. Do not
+     run Drawer or expose the invalid payload to the replacement Reviewer. A
+     second consecutive invalid result fails closed.
+   - `review_same_draft`: the result is a clean `ship`, but fewer than
+     `min_reviews` valid Reviewer calls have completed across the run. Spawn a
+     new Reviewer on the same audit view and byte-identical
+     `img_iter<N>.png`. Do not spawn Drawer, do not advance `N`, and do not
+     expose the first review JSON to the new Reviewer.
+   - `draw`: actionable feedback exists. The helper has written the canonical
+     `review_feedback_<N>/review.json` and `audit_iter<N>.json`; run
+     `tools/figannot.py draw --max-iters <max_iters>`, then start Drawer round
+     `N+1` only if the helper succeeds. The helper returns
+     this action only when `N+1 < max_iters`.
+     The next valid review must name `N+1` and its canonical draft hash must
+     differ from `img_iter<N>.png`; reviewing the old draft again is invalid.
+   - `ship`: the clean `ship` meets `min_reviews`. The helper has written the
+     canonical audit; select this iteration and finalize without another Drawer.
+   - `stop_at_cap`: actionable feedback exists but the current draft is
+     `N = max_iters-1` (the fifth draft under the default). Do not run `draw` and
+     do not spawn Drawer. Enter the hard-cap finalization policy below.
+6. Only the helper's `draw` action may start another Drawer. Never ask Drawer to
+   act on an empty repair brief, an invalid review, or a clean provisional ship.
+7. `min_reviews` counts every valid Reviewer call across drafts, whether clean or
+   actionable. Invalid results do not count. A clean result before the total
+   reaches `min_reviews` reviews the same byte-identical draft again without a
+   Drawer call. Actionable feedback starts another Drawer whenever the hard cap
+   has not been reached; it does not reset the valid-review count.
 
-At a non-auto hard cap, select the best floor-passing `close` iteration with the
+The Drawer cap does not prevent additional review calls on the final draft. A
+clean result below `min_reviews` still returns `review_same_draft`, and a later
+clean result may return `ship`; only another Drawer is prohibited at the cap.
+
+At the hard cap, select the best floor-passing `close` iteration with the
 lowest reference drift; otherwise select any floor-passing iteration with the
 shortest violation list.
 
@@ -197,6 +252,8 @@ Spawn the Drawer as a named subagent:
 ```text
 agent_type = "figmirror-drawer"
 fork_context = false
+Role: figmirror-drawer
+Iter: $ITER
 ```
 
 The Drawer prompt must be self-contained and name the working directory, iter
@@ -204,8 +261,9 @@ index, staged prompt paths, input paths, prior audit path when present, and the
 four required output files. It must also name the local render command from
 `PYTHON_CMD`; the Drawer must use that command instead of guessing `python` or
 `python3`.
-Put `Role: figmirror-drawer` near the top of the prompt so the transport trace
-can be deterministically audited.
+Put the exact lines `Role: figmirror-drawer` and `Iter: $ITER` near the top of
+the prompt, replacing `$ITER` with the current non-negative decimal iteration,
+so the transport trace can be deterministically audited.
 State that the task is a bounded production pass: temporary probes are allowed
 only as local aids, and the Drawer must write `figure_iter<N>.py`,
 `img_iter<N>.png`, `notes_iter<N>.md`, and `floor_selfcheck_iter<N>.txt` before
@@ -222,7 +280,8 @@ is a real conflict, the notes must include a compact `## Conflict ledger` sectio
 so the next Reviewer can spend extra effort on that property.
 
 For `N > 0`, the Drawer prompt must also name the prior annotated feedback:
-`audit_view_<N-1>/annotated.png` and `audit_view_<N-1>/notes.md`. The annotated
+`review_feedback_<N-1>/annotated.png` and
+`review_feedback_<N-1>/notes.md`. The annotated
 image is the far-view reference|draft composite with numbered boxes on the
 draft side; `notes.md` maps each number to the actionable mismatch. The Drawer
 should fix those boxed spots first, then preserve any prior
@@ -238,18 +297,22 @@ Before launching the Reviewer, verify that `figure_iter<N>.py`,
 `img_iter<N>.png`, `notes_iter<N>.md`, and `floor_selfcheck_iter<N>.txt` exist
 and are non-empty. Missing artifacts before the patience window are not evidence
 that Drawer is dead. Wait at least 20 minutes for iter 0 and 10 minutes for
-later iters before repairing missing artifacts by re-spawning `figmirror-drawer`
-with the same role and a narrower repair instruction.
+later iters. A timed-out wait without a terminal child state continues on the
+same child. Repair missing artifacts by re-spawning `figmirror-drawer` with the
+same role and a narrower repair instruction only after the child is terminal.
+Do not close a live Drawer to manufacture that state. Run the incomplete-bundle
+check with the actual absolute script and workdir paths, not shell variables or
+relative path tokens.
 
 ## Reviewer Invocation
 
 ```bash
 ITER=<N>
 FIGANNOT="$WORKDIR/tools/figannot.py"
-mkdir -p "$WORKDIR/audit_view_$ITER"
 AV="$WORKDIR/audit_view_$ITER"
+test ! -e "$AV"
+mkdir "$AV"
 cp "$WORKDIR/inputs/reference_clean.png" "$AV/reference_clean.png"
-cp "$WORKDIR/img_iter$ITER.png" "$AV/img_iter$ITER.png"
 cp "$WORKDIR/img_iter$ITER.png" "$AV/draft_fullres.png"
 cp "$REFERENCES/reviewer.md" "$WORKDIR/audit_view_$ITER/reviewer.md"
 cp "$REFERENCES/aesthetic-library.md" "$WORKDIR/audit_view_$ITER/aesthetic-library.md"
@@ -263,31 +326,10 @@ if [ -f "$WORKDIR/prompts/three-d-prompting.md" ]; then
     cp "$WORKDIR/img_iter$ACCEPTED_ITER.png" "$WORKDIR/audit_view_$ITER/accepted_control.png"
   fi
 fi
-if [ "$ITER" -gt 0 ]; then
-  cp "$WORKDIR/audit_iter$((ITER-1)).json" "$WORKDIR/audit_view_$ITER/audit_iter$((ITER-1)).json"
-  if grep -q '^## Conflict ledger' "$WORKDIR/notes_iter$((ITER-1)).md" 2>/dev/null; then
-    awk 'BEGIN{copy=0} /^## Conflict ledger/{copy=1} copy && /^## / && $0 !~ /^## Conflict ledger/{exit} copy{print}' \
-      "$WORKDIR/notes_iter$((ITER-1)).md" > "$WORKDIR/audit_view_$ITER/conflict_ledger.md"
-  fi
-fi
-
-# Build bounded Reviewer memory. `prepare` writes anchors.md from prior
-# review.json confirmed-good fields and changed.md from the immediately previous
-# boxed notes.
-bash -lc "$PYTHON_CMD \"$FIGANNOT\" prepare \
-  --workdir \"$WORKDIR\" \
-  --iter \"$ITER\" \
-  --out-dir \"$AV\""
-
-ANCHORS="$AV/anchors.md"
-CHANGED="$AV/changed.md"
-
 bash -lc "$PYTHON_CMD \"$FIGANNOT\" compose \
   --ref \"$WORKDIR/inputs/reference_clean.png\" \
   --draft \"$WORKDIR/img_iter$ITER.png\" \
   --reviewer-md \"$REFERENCES/reviewer.md\" \
-  --anchors-md \"$ANCHORS\" \
-  --changed-md \"$CHANGED\" \
   --out-dir \"$AV\""
 ```
 
@@ -306,45 +348,118 @@ Audit view: $WORKDIR/audit_view_$ITER
 Iter: $ITER
 Read review_prompt.txt, reviewer.md, and aesthetic-library.md from the audit
 view. Far view: composite.png. Near views: reference_clean.png and
-img_iter$ITER.png / draft_fullres.png. Optional prior audit:
-audit_iter$((ITER-1)).json. Optional bounded memory: anchors.md, changed.md,
-and conflict_ledger.md. Optional 3D insert: three-d-prompting.md plus routed
-files under three-d/. Use the L1/L2/L3 hierarchy: ground every claim in L1 or
-L2, never L3. For geometry, use composite bbox coordinates, visual estimates,
-and any diagnostics already staged in the audit view; separate global canvas
-shape, per-panel shape, and inter-panel gutter/packing. Do not read outside this
-audit view. Do not write files. Do not run code or Python. Return the JSON object
-specified in reviewer.md and nothing else.
+draft_fullres.png. Optional fixed 3D audit material: three-d-prompting.md plus
+routed files under three-d/. This is a closed, stateless audit of the current
+draft: do not read process state, Drawer notes, review history, or history-like
+files. Use the L1/L2/L3 hierarchy: ground every claim in L1 or L2, never L3.
+For geometry, use composite bbox coordinates, visual estimates, and any
+diagnostics already staged in the audit view; separate global canvas shape, per-panel shape, and inter-panel gutter/packing.
+Do not read outside this audit view. Do not write
+files. Do not run code or Python. Return the JSON object specified in reviewer.md
+and nothing else.
+
+The visual inputs are already attached once in this order: composite.png,
+reference_clean.png, draft_fullres.png, followed by accepted_control.png only
+when that optional strict-3D file is present. Do not call `view_image` or reopen
+image paths. If a final checkpoint asks you to recheck the figure, reconsider
+the already attached pixels without performing another image/tool pass.
 ```
 
-The Orchestrator treats the Reviewer final JSON as the only audit payload. It
-extracts the first JSON object from the subagent result, validates it with
-`json.loads`, writes it verbatim to both `audit_view_<N>/review.json` and
-`audit_iter<N>.json`, then runs:
+Use one structured `items` payload for the spawn. Do not set `message`, and do
+not convert the local images into text-only path markers:
+
+```json
+{
+  "agent_type": "figmirror-reviewer",
+  "fork_context": false,
+  "items": [
+    {"type": "text", "text": "<the complete Reviewer task text above>"},
+    {"type": "local_image", "path": "$AV/composite.png"},
+    {"type": "local_image", "path": "$AV/reference_clean.png"},
+    {"type": "local_image", "path": "$AV/draft_fullres.png"}
+  ]
+}
+```
+
+If `$AV/accepted_control.png` exists, append exactly one additional
+`local_image` item for it after `draft_fullres.png`. Do not attach
+`img_iter$ITER.png` as well: it is byte-identical to the staged
+`draft_fullres.png` and would duplicate the near view.
+
+The Orchestrator treats the Reviewer final text as the only audit payload. Save
+that exact text with `apply_patch` to a temporary file outside the audit view;
+do not interpolate it through shell quoting, and keep that file until the
+adapter finishes post-run verification. The incoming filename must contain the exact Reviewer session ID.
+For example, use `.review_incoming_<reviewer-session-id>.json`. If the final is missing or empty,
+create an empty incoming file. `review-decision` records malformed, empty, and
+non-object values as invalid attempts without fabricating a visual verdict.
+
+For this command only, materialize the script path and every flag value as literals
+in the command text recorded by the trace. Expand `PYTHON_CMD`, the absolute
+workdir, the decimal iteration, the canonical draft path, the exact child ID,
+`min_reviews`, and `max_iters` before execution. Do not leave `$WORKDIR`, `$ITER`, or another
+shell variable in the traced command. Replace the sample values below with the
+current run's literal values, then run the deterministic gate:
 
 ```bash
-bash -lc "$PYTHON_CMD \"$WORKDIR/tools/figannot.py\" draw --out-dir \"$WORKDIR/audit_view_$ITER\""
+UV_CACHE_DIR=/datadrive/xiaohan/figmirror/uv-cache uv run --project /absolute/path/to/repo python /absolute/path/to/run-directory/tools/figannot.py review-decision \
+  --review /absolute/path/to/run-directory/.review_incoming_<reviewer-child-id>.json \
+  --workdir /absolute/path/to/run-directory \
+  --iter 0 \
+  --draft /absolute/path/to/run-directory/img_iter0.png \
+  --reviewer-session <reviewer-child-id> \
+  --min-reviews 2 \
+  --max-iters 5
 ```
 
-`audit_view_<N>/annotated.png` and `audit_view_<N>/notes.md` are required
-artifacts. They are the next Drawer invocation's boxed visual feedback.
+Obey the returned `action` literally:
+
+- `review_same_draft`: spawn a new `figmirror-reviewer` with the same `$AV`
+  and the same attached image paths. Do not run `draw`, do not spawn Drawer,
+  and do not change `ITER`. The helper intentionally has not written the first
+  clean result into the audit view, so the next Reviewer sees the same closed
+  current-draft input without another review's result.
+- `retry_reviewer`: retry the same review slot once with a fresh
+  `figmirror-reviewer`, the same `$AV`, and the same attached image paths. It
+  does not count toward `min_reviews` and must never trigger Drawer. A second
+  consecutive invalid result is persisted as retry exhaustion and exits
+  nonzero.
+- `draw`: run the command below. Apply the same trace-literal rule to this draw
+  command: materialize the Python command, script path, and `--out-dir` as
+  literal values in the recorded command; do not leave `$PYTHON_CMD`,
+  `$WORKDIR`, `$ITER`, or another shell variable. The helper has already written
+  the canonical audit and `review_feedback_<N>/review.json`; `annotated.png`
+  plus `notes.md` in that feedback directory become the next Drawer's repair brief.
+  The next Reviewer runs only after Drawer writes the changed `img_iter<N+1>.png`.
+- `ship`: select this iter and finalize. Do not run `draw` or spawn Drawer.
+- `stop_at_cap`: do not run `draw` and do not spawn Drawer. Apply the hard-cap
+  selection policy and finalize the selected existing iteration.
+
+```bash
+UV_CACHE_DIR=/datadrive/xiaohan/figmirror/uv-cache uv run --project /absolute/path/to/repo python /absolute/path/to/run-directory/tools/figannot.py draw --out-dir /absolute/path/to/run-directory/review_feedback_0 --max-iters 5
+```
 
 The Reviewer restriction is prompt-level: it must not write files. Treat any
 Reviewer-side write as a protocol anomaly and record it in `process.md`.
 
 **Reviewer failure handling — MANDATORY, never fabricate an audit.** If the
-Reviewer subagent fails, stalls/times out, or does not return valid JSON, you
-MUST NOT invent `quality_floor` / `fidelity` verdicts. A fabricated
-`passed:true` / `verdict:close` audit silently disables the ONLY quality gate and
-ships broken drafts. Instead:
+Reviewer subagent fails, stalls/times out, does not return valid JSON, or
+`review-decision` returns `retry_reviewer`, you MUST NOT invent
+`quality_floor` / `fidelity` verdicts. A fabricated `passed:true` /
+`verdict:close` audit silently disables the ONLY quality gate and ships broken
+drafts. Instead:
 
-1. Retry the SAME `figmirror-reviewer` spawn once with the same audit view.
-2. If it fails again, FAIL CLOSED: write
-   `{"iter": $ITER, "quality_floor": {"passed": false, "violation_kinds":
-   ["reviewer_unavailable"], "summary": "reviewer subagent failed; gate could not
-   run"}, "fidelity": {"verdict": "off"}}` to `audit_iter$ITER.json`, record the
-   failure in `process.md`, and do NOT select that iter as final unless it is the
-   only one that exists. A self-graded "pass" is a protocol violation, never allowed.
+1. Retry the same `figmirror-reviewer` role once with the same audit view, a new
+   child session ID, and a fresh single structured image bundle. Keep the same
+   no-`view_image`, no-reopen rule. Do not expose the invalid result.
+2. If it fails again, let `review-decision` persist the exhausted invalid
+   attempt and exit nonzero. Write the reason to `REVIEWER_FAILED`, record it in
+   `process.md`, stop the sample nonzero, and do not finalize or select any
+   iteration.
+
+Do not synthesize a `reviewer_unavailable` audit: it would have no valid Reviewer
+terminal payload or matching ledger transition. A fabricated audit of any
+verdict is a protocol violation.
 
 ## Finalization
 

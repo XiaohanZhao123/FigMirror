@@ -39,17 +39,13 @@ You have access to:
 - Optional `three-d-prompting.md` — 3D-specific router. Read it when present,
   then read exactly one mode file from `three-d/` and only the routed modules.
   Use strict scorecards only when `strict-reproduction.md` is selected.
-- (when iter > 0) `audit_iter<N-1>.json` — the prior reviewer's full audit.
-- (optional) `anchors.md` — bounded list of style aspects previous passes
-  confirmed as correct. Build on these; do not re-open them unless L1/L2
-  evidence proves drift.
-- (optional) `changed.md` — boxed areas the Drawer just revised. Revisit them
-  early. If the revised area now reads in the same L1 visual class, add it to
-  `confirmed_good` and move attention to the next highest-risk floor/fidelity
-  issue. Keep pushing only when the mismatch is visually obvious.
-- (optional) `conflict_ledger.md` — bounded Drawer notes from the prior iter when
-  the Drawer saw a conflict between Reviewer feedback and its own L1/L2 anchor.
-  Treat this as a triage list, not ground truth.
+
+This is a closed, stateless audit. Derive the result only from the staged
+reference, the current draft, the convention library, fixed diagnostics, and
+the optional 3D material listed above. Do not read process state, Drawer notes,
+review history, or any history-like file accidentally present in the audit
+view. Rebuild the reference inventory and all positive/negative judgments from
+the current pixels on every call.
 
 For strict 3D when `accepted_control.png` is present, compare draft against both
 L1 and the control. Do not accept a repair that only changes activity/detail but
@@ -239,11 +235,6 @@ Good local-register anchor:
   left edges on the leftmost column, y tick-label text in the right-side panel
   gutters, and separate row-end colorbar labels."
 
-When `conflict_ledger.md` says a prior Drawer disagreed with an axis/framing
-anchor, spend extra attention on this pass before re-affirming that anchor.
-Re-affirm the corrected topology if L1 supports it; otherwise replace the stale
-anchor with the side-specific observation.
-
 ## What you produce — STRICT JSON, parser-dependent
 
 CRITICAL: Your output MUST be a single JSON object, nothing else. No prose before or
@@ -254,9 +245,7 @@ after. No markdown code fences. No commentary. The orchestrator parses your outp
 {
   "iter": <int>,
   "confirmed_good": [
-    // 1-5 style aspects verified correct in this pass. These become anchors.md
-    // for later stateless Reviewer calls. Include changed.md items here only
-    // after you verified the fix against L1/L2.
+    // 1-5 style aspects verified correct in this pass from the current pixels.
   ],
   "reference_inventory": {
     // Step 0: YOUR independent read of the reference (not the draft, not a handed-in list).
@@ -336,6 +325,20 @@ after. No markdown code fences. No commentary. The orchestrator parses your outp
 }
 ```
 
+The downstream decision gate treats these fields as one coherent result:
+
+- A clean ship is exactly `quality_floor.passed=true`, an empty
+  `violation_kinds` list, null/empty floor summary, `fidelity.verdict="ship"`,
+  and empty `focus_themes` and `boxes` lists.
+- An actionable result is either a failed floor with a named allowed violation
+  and non-empty summary, or a `close`/`off` verdict with at least one concrete
+  focus theme or valid box.
+- Never return `close` or `off` with empty feedback. Never combine `ship` with
+  a failed floor or repair feedback. Those inconsistent results are invalid,
+  do not count as a review, and return `retry_reviewer` for one fresh Reviewer
+  protocol retry on the same immutable draft. They never trigger Drawer; a
+  second consecutive invalid result fails closed.
+
 ## Boxes — visual feedback for the next Drawer
 
 The next Drawer is stateless; your boxes and notes are its concrete visual
@@ -379,10 +382,9 @@ REQUIRED behavior:
 - Even if the figure is mostly off, find SOMETHING right (e.g. "the choice of 2x3
   panel grid matches the reference's row × col composition"). The empty list is not
   a valid output.
-- Items should be STABLE across iters — once you affirm "near-square contour
-  panels are correct" in iter 2, every subsequent iter's reviewer should re-affirm
-  it when it remains true (the prior audit JSON is in your view; read it before
-  writing yours).
+- Re-derive this list from the current reference and draft on every call. Include
+  every currently correct high-value property that the Drawer should preserve;
+  do not assume another audit will supply it.
 
 GOOD anchor items:
 
@@ -401,42 +403,15 @@ BAD anchor items (do NOT write these — too vague, unverifiable, or trivially-t
 - "Colors are nice." ← not actionable; doer can't use this to decide what to preserve.
 - "Has axes and labels." ← trivially true, no anchoring power.
 
-## Reading the prior audit (when iter > 0)
+## Stateless attention rule
 
-`audit_iter<N-1>.json` is in your view. READ IT FIRST, before writing your own audit.
-
-Two rules anchored to the prior audit:
-
-1. **Re-affirm what was right.** If the prior audit's `anchor.what_is_right` listed
-   property X and you can confirm X is still correct by L1/L2 visual evidence or a
-   staged diagnostic,
-   include X in your `anchor.what_is_right` too. Do not silently drop affirmations —
-   silent drops cause drift because the Drawer stops preserving a property once
-   the Reviewer stops affirming it.
-
-2. **Damping — no opposite-direction themes.** If a prior `focus_theme` pushed the
-   doer in direction X (e.g. "raise the typographic voice"), and the doer moved in
-   direction X, do NOT write a focus_theme that pushes the OPPOSITE direction (e.g.
-   "lighten the typographic voice"). Either accept the new state, or recommend
-   continued movement in the same direction. Damping > perfectionism.
-
-3. **Conflict ledger gets extra attention.** If `conflict_ledger.md` is present,
-   read it after the prior audit. For each listed property, re-check reference and
-   draft directly before affirming or disagreeing. The ledger is not evidence by
-   itself; it is a request to spend more audit effort on a likely-conflicted
-   property. If the prior Drawer was wrong, say so in `fidelity.paragraph` or a
-   `focus_theme`. If the Drawer was right, re-affirm the corrected anchor.
-
-After you revisit `changed.md`, rotate attention. A fixed item becomes an anchor
-for preservation, not the lead issue again. Spend the freed audit effort on the
-highest-risk local floor checks in the full-resolution draft, especially text,
-ticks, in-panel badges, colorbar labels, and annotations that may be too tight,
-clipped, or obscured by plotted layers.
-
-Damping prevents oscillation. Observed failure: adjacent reviews pushed body type
-weight bolder, then lighter, wasting rounds without new evidence. Do not
-alternate direction on type weight, color, spacing, or aspect unless fresh L1/L2
-evidence shows the prior direction was wrong.
+Spend the audit budget on the highest-risk visible evidence in this call. Start
+with chart construction and signature motifs, then inspect geometry and the
+full-resolution quality floor: text, ticks, in-panel badges, colorbar labels,
+and annotations that may be too tight, clipped, or obscured by plotted layers.
+When a property already matches L1/L2, record it under
+`anchor.what_is_right` and move on. Recommend a directional change only when
+the current reference/draft comparison supports it.
 
 ## The quality floor — pass/fail, pattern-level, named-kinds-only
 
@@ -630,7 +605,8 @@ expected. Match this register.
     "verdict": "ship",
     "paragraph": "Reads as a sibling of the reference. The remaining gaps I might have flagged (label band slightly tighter at one tick) are within the reference's own variance across panels — not worth a revision round. Ship."
   },
-  "focus_themes": []
+  "focus_themes": [],
+  "boxes": []
 }
 ```
 
@@ -717,10 +693,19 @@ trying to fit OUR data into the reference's canvas dimensions instead of recompu
     "paragraph": "Palette and spine treatment are recognizable as the reference family (see anchor), but the figure reads as too dense for its canvas. The typographic voice is too loud relative to the data area, and the inter-panel and inter-row spacing is not absorbing the per-point label band. The whole layout strategy needs rethinking before fidelity can be meaningfully judged."
   },
   "focus_themes": [
-    "Rethink figure geometry from the label band up — pick canvas dimensions and spacing so OUR per-point labels have the room they need.",
-    "Keep text above the plotted data layer — reference badges and annotations remain readable; candidate contours or fills must not run over their glyphs or boxes.",
-    "Reduce the typographic voice; the label and tick fonts read bolder than the reference's restrained register.",
-    "Reserve adequate bottom-margin headroom; the x-axis label is currently clipped."
+    "[L1] Rethink figure geometry from the label band up — pick canvas dimensions and spacing so OUR per-point labels have the room they need.",
+    "[L1] Keep text above the plotted data layer — reference badges and annotations remain readable; candidate contours or fills must not run over their glyphs or boxes.",
+    "[L1+L2] Reduce the typographic voice; the label and tick fonts read bolder than the reference's restrained register.",
+    "[L2] Reserve adequate bottom-margin headroom; the x-axis label is currently clipped."
+  ],
+  "boxes": [
+    {
+      "x0": 910,
+      "y0": 520,
+      "x1": 1510,
+      "y1": 890,
+      "note": "Draft labels overlap the tick row and the bottom x-axis label is clipped."
+    }
   ]
 }
 ```
